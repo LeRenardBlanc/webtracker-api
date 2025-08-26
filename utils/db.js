@@ -5,6 +5,7 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 export const supabase = createClient(supabaseUrl, supabaseServiceKey, {
   auth: { persistSession: false }
 });
+export default supabase;
 
 // Helpers for common queries (tables must exist in Supabase)
 export const DB = {

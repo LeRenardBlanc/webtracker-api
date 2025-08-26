@@ -2,6 +2,7 @@
 import { handleCors, jsonErr } from '../utils/response.js';
 import { verifyFirebaseIdToken } from '../utils/auth.js';
 import { DB } from '../utils/db.js';
+import { validate as validateUUID } from 'uuid';
 
 function gpxFromPoints(points) {
   const header = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="webtracker">\n<trk><name>Export</name><trkseg>`;
@@ -24,6 +25,11 @@ export default async function handler(req, res) {
   const to = parseInt(url.searchParams.get('to') || '0', 10);
   const format = (url.searchParams.get('format') || 'gpx').toLowerCase();
   if (!from || !to) return jsonErr(res, 'from & to required (ms epoch)');
+
+  // Validate user UID as UUID
+  if (!validateUUID(user.uid)) {
+    return jsonErr(res, 'Invalid user UID format', 400);
+  }
 
   const { data: points, error } = await DB.listLocations(user.uid, from, to);
   if (error) return jsonErr(res, 'DB error', 500);

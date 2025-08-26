@@ -1,0 +1,7 @@
+.vercel
+# Secrets and local env
+.env
+*.service-account.json
+secrets/
+webtracker-*-firebase-adminsdk-*.json
+node_modules
