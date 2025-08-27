@@ -50,7 +50,7 @@ export default async function handler(req, res) {
   const deviceRow = {
     device_id: linkData.device_id || `dev_${Date.now()}`,
     user_id: userData.id, // UUID valide
-    pubkey_b64: linkData.pubkey || null,
+    pubkey: linkData.pubkey || null,
     created_at: new Date().toISOString(),
     revoked: false
   };
