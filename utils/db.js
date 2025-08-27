@@ -34,4 +34,16 @@ export const DB = {
     if (to_ms) q = q.lte('ts_ms', to_ms);
     return await q.order('ts_ms', { ascending: true });
   }
+  async insertNotification({ user_id, device_id, type, payload }) {
+    try {
+      const { data, error } = await supabase
+        .from('notifications')
+        .insert({ user_id, device_id, type, payload })
+        .select();
+      return { data, error };
+    } catch (err) {
+      return { data: null, error: err };
+    }
+  },
+};
 };
