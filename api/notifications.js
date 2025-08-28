@@ -8,13 +8,38 @@ export default async function handler(req, res) {
   try {
     // ----------- ANDROID (GET) -----------
     if (req.method === 'GET') {
+      // Try signed request first (preferred)
       const vr = await verifySignedRequest(req, { expectedPath: '/api/notifications' });
-      if (!vr.ok) return jsonErr(res, vr.error, vr.status);
+      
+      let device = null;
+      let user_id = null;
 
-      const device = vr.device;
-      if (!device) return jsonErr(res, 'Device not found', 401);
+      if (vr.ok) {
+        // Signed request
+        device = vr.device;
+        user_id = device.user_id;
+      } else {
+        // Fallback to device_id query parameter for backward compatibility
+        const url = new URL(req.url, 'http://localhost');
+        const device_id = url.searchParams.get('device_id');
+        
+        if (!device_id) {
+          return jsonErr(res, 'Missing authentication', 401);
+        }
 
-      const { data: notes, error } = await DB.getNotifications(device.user_id);
+        // Get device info from database
+        const { data: deviceData, error: devErr } = await DB.getDevice(device_id);
+        if (devErr || !deviceData) {
+          return jsonErr(res, 'Unknown device', 401);
+        }
+        
+        device = deviceData;
+        user_id = device.user_id;
+      }
+
+      if (!user_id) return jsonErr(res, 'User not found', 401);
+
+      const { data: notes, error } = await DB.getNotifications(user_id);
       if (error) return jsonErr(res, 'DB error', 500);
 
       return jsonOk(res, { notifications: notes || [] });

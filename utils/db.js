@@ -46,6 +46,14 @@ export const DB = {
       .single();
   },
 
+  async getTrustedLocations(user_id) {
+    return await supabase
+      .from('trusted_locations')
+      .select('id, label, lat, lon, radius_m, created_at')
+      .eq('user_id', user_id)
+      .order('created_at', { ascending: false });
+  },
+
   async deleteTrusted(user_id, id) {
     return await supabase
       .from('trusted_locations')
