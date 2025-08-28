@@ -1,12 +1,41 @@
 // Methods:
+//  - GET /api/trusted — requires signed device request  
 //  - POST /api/trusted — requires Firebase Auth or deviceId
 //  - DELETE /api/trusted?id=123 — requires Firebase Auth or deviceId
 import { handleCors, jsonErr, jsonOk } from '../utils/response.js';
-import { verifyFirebaseIdToken } from '../utils/auth.js';
+import { verifyFirebaseIdToken, verifySignedRequest } from '../utils/auth.js';
 import { supabase } from '../utils/db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
+
+  // Handle GET requests with signed authentication
+  if (req.method === 'GET') {
+    const vr = await verifySignedRequest(req, { expectedPath: '/api/trusted' });
+    if (!vr.ok) return jsonErr(res, vr.error, vr.status);
+    
+    const device = vr.device;
+    if (!device) return jsonErr(res, 'Device not found', 401);
+    
+    // Return trusted locations for the user
+    const { data: locations, error } = await supabase
+      .from('trusted_places')
+      .select('id, label, lat, lon, radius_m')
+      .eq('user_id', device.user_id)
+      .order('created_at', { ascending: false });
+
+    if (error) return jsonErr(res, 'Failed to get trusted locations', 500);
+
+    // Convert to match Android TrustedLocation format  
+    const trustedLocations = (locations || []).map(loc => ({
+      id: loc.id.toString(),
+      latitude: loc.lat,
+      longitude: loc.lon,
+      radius: loc.radius_m
+    }));
+
+    return jsonOk(res, trustedLocations);
+  }
 
   // On essaye d'identifier soit via Firebase, soit via deviceId
   let userId = null;

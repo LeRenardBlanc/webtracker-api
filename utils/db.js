@@ -40,7 +40,7 @@ export const DB = {
 
   async addTrusted(row) {
     return await supabase
-      .from('trusted_locations')
+      .from('trusted_places')
       .insert(row)
       .select('*')
       .single();
@@ -48,7 +48,7 @@ export const DB = {
 
   async deleteTrusted(user_id, id) {
     return await supabase
-      .from('trusted_locations')
+      .from('trusted_places')
       .delete()
       .eq('user_id', user_id)
       .eq('id', id);
