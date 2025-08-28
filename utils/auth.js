@@ -47,7 +47,7 @@ export async function verifyFirebaseIdToken(req) {
  *
  * The signBase string is:
  *   METHOD\n
- *   PATH\n
+ *   FULL_PATH_WITH_QUERY\n
  *   TS\n
  *   NONCE\n
  *   BODY_HASH
@@ -87,18 +87,20 @@ export async function verifySignedRequest(req, { expectedPath }) {
     return { ok: false, error: 'Timestamp out of range', status: 401 };
   }
 
-  // Build the signBase string
+  // Build the signBase string, including query string
   const method = req.method;
-  const path = new URL(req.url, 'http://localhost').pathname;
-  if (expectedPath && path !== expectedPath) {
-    console.error('🐛 Unexpected path:', path, 'expected', expectedPath);
+  const urlObj = new URL(req.url, 'http://localhost');
+  const fullPath = urlObj.pathname + urlObj.search;
+  if (expectedPath && urlObj.pathname !== expectedPath) {
+    console.error('🐛 Unexpected path:', urlObj.pathname, 'expected', expectedPath);
     return { ok: false, error: 'Bad request path', status: 400 };
   }
+
   const rawBody = typeof req.body === 'string'
     ? req.body
     : JSON.stringify(req.body || {});
   const bodyHash = sha256Base16(rawBody);
-  const signBase = `${method}\n${path}\n${ts}\n${nonce}\n${bodyHash}`;
+  const signBase = `${method}\n${fullPath}\n${ts}\n${nonce}\n${bodyHash}`;
 
   console.log('🐛 Computed signBase:', signBase);
 
