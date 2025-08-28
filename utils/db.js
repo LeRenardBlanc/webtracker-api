@@ -32,7 +32,7 @@ export const DB = {
   async getNotifications(user_id) {
     return await supabase
       .from('notifications')
-      .select('id, type, payload, created_at')
+      .select('id, type, payload, message, created_at')
       .eq('user_id', user_id)
       .eq('is_read', false)
       .order('created_at', { ascending: false });
@@ -68,9 +68,10 @@ export const DB = {
 
   async insertNotification({ user_id, device_id, type, payload }) {
     try {
+      const message = typeof payload === 'string' ? payload : JSON.stringify(payload);
       const { data, error } = await supabase
         .from('notifications')
-        .insert({ user_id, device_id, type, payload })
+        .insert({ user_id, device_id, type, message })
         .select();
       return { data, error };
     } catch (err) {
