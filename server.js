@@ -12,7 +12,14 @@ if (!process.env.SUPABASE_URL) {
 }
 
 const app = express();
-app.use(express.json());
+
+// <-- replace the simple json parser with one that saves the raw body -->
+app.use(express.json({
+  verify: (req, res, buf) => {
+    // stash the raw text buffer so our signature code can re-hash the exact same bytes
+    req.rawBody = buf;
+  }
+}));
 
 // simple loader for files in ./api/*.js export default handler(req,res)
 const apiDir = path.join(process.cwd(), 'api');
