@@ -71,14 +71,12 @@ export default async function handler(req, res) {
       let successCount = 0;
       for (const device of devices) {
         try {
-          // Normalize device_id by removing hyphens to match database format
-          const normalizedDeviceId = device.device_id.replace(/-/g, '');
-          
+          // Important: Make sure to use device_id as-is from database without modification
           const { error: insertErr } = await supabase
             .from('notifications')
             .insert({
               user_id: userUuid,
-              device_id: normalizedDeviceId,
+              device_id: device.device_id, // This should already be in the correct format from DB
               type,
               payload
             });
@@ -95,11 +93,12 @@ export default async function handler(req, res) {
 
       console.log(`📱 Broadcast notification to ${successCount}/${devices.length} devices`);
 
-      if (successCount === 0) {
-        return jsonErr(res, 'Failed to send notification to any devices', 500);
+      // Success if at least one notification was sent
+      if (successCount > 0) {
+        return jsonOk(res);
+      } else {
+        return jsonErr(res, 'Failed to send notifications to any devices', 500);
       }
-
-      return jsonOk(res);
     }
 
     return jsonErr(res, 'Method not allowed', 405);
