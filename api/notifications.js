@@ -1,6 +1,6 @@
 import { handleCors, jsonErr, jsonOk } from '../utils/response.js';
 import { verifySignedRequest, verifyFirebaseIdToken } from '../utils/auth.js';
-import { DB } from '../utils/db.js';
+import { DB, supabase } from '../utils/db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
@@ -55,16 +55,46 @@ export default async function handler(req, res) {
         ? payloadObj
         : JSON.stringify(payloadObj);
 
-      // Insert notification into DB
-      const { error: insertErr } = await DB.insertNotification({
-        user_id: userUuid,
-        device_id: device_id || null,
-        type,
-        payload
-      });
-      if (insertErr) {
-        console.error('Error inserting notification:', insertErr);
-        return jsonErr(res, 'DB error inserting notification', 500);
+      // If a specific device_id is provided, insert one notification.
+      // Otherwise broadcast to all the user's active devices.
+      if (device_id) {
+        const { error: insertErr } = await DB.insertNotification({
+          user_id: userUuid,
+          device_id,
+          type,
+          payload
+        });
+        if (insertErr) {
+          console.error('Error inserting notification:', insertErr);
+          return jsonErr(res, 'DB error inserting notification', 500);
+        }
+      } else {
+        // Fetch all non-revoked devices for this user
+        const { data: devices, error: devErr } = await supabase
+          .from('devices')
+          .select('device_id')
+          .eq('user_id', userUuid)
+          .eq('revoked', false);
+        if (devErr) {
+          console.error('Error fetching devices for broadcast:', devErr);
+          return jsonErr(res, 'DB error fetching devices', 500);
+        }
+        if (!devices || devices.length === 0) {
+          return jsonErr(res, 'No devices found for user', 404);
+        }
+        // Insert a notification for each device
+        for (const d of devices) {
+          const { error: insertErr } = await DB.insertNotification({
+            user_id: userUuid,
+            device_id: d.device_id,
+            type,
+            payload
+          });
+          if (insertErr) {
+            console.error('Error inserting broadcast notification for device', d.device_id, insertErr);
+            return jsonErr(res, 'DB error inserting notification', 500);
+          }
+        }
       }
 
       return jsonOk(res, { success: true });
