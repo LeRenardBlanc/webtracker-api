@@ -28,7 +28,6 @@ export async function verifyFirebaseIdToken(req) {
 }
 
 export async function verifySignedRequest(req, { expectedPath }) {
-  // Required headers from device
   const device_id = req.headers['x-device-id'];
   const ts = req.headers['x-ts'];
   const nonce = req.headers['x-nonce'];
@@ -47,12 +46,8 @@ export async function verifySignedRequest(req, { expectedPath }) {
     return { ok: false, error: 'Timestamp out of range', status: 401 };
   }
 
-  // Build sign base string
   const method = req.method;
-  const path = new URL(req.url, 'http://localhost').pathname; // Vercel provides absolute path at runtime
-  if (expectedPath && path !== expectedPath) {
-    // Not critical, but keeps consistent canonical base
-  }
+  const path = new URL(req.url, 'http://localhost').pathname;
   const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {});
   const bodyHash = sha256Base16(rawBody);
   const signBase = `${method}\n${path}\n${ts}\n${nonce}\n${bodyHash}`;
@@ -62,6 +57,9 @@ export async function verifySignedRequest(req, { expectedPath }) {
   if (devErr || !device) {
     return { ok: false, error: 'Unknown device', status: 401 };
   }
+  if (!device.pubkey) {
+    return { ok: false, error: 'Device missing pubkey', status: 401 };
+  }
 
   // Insert nonce (unique constraint prevents replay)
   const { error: nonceErr } = await DB.insertNonce(nonce, device_id, parseInt(ts, 10));
@@ -69,9 +67,13 @@ export async function verifySignedRequest(req, { expectedPath }) {
     return { ok: false, error: 'Nonce already used', status: 401 };
   }
 
-  // Verify signature
-  const ok = verifyEd25519Signature({ signBase, sigB64: sig_b64, pubkeyB64: device.pubkey });
-  if (!ok) {
+  // Verify signature (guard against exceptions)
+  try {
+    const ok = verifyEd25519Signature({ signBase, sigB64: sig_b64, pubkeyB64: device.pubkey });
+    if (!ok) {
+      return { ok: false, error: 'Signature verification failed', status: 401 };
+    }
+  } catch {
     return { ok: false, error: 'Signature verification failed', status: 401 };
   }
 
