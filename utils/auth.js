@@ -14,7 +14,6 @@ if (!admin.apps?.length) {
       })
     });
   } catch (err) {
-    // Already initialized or missing credentials
     console.warn('Firebase Admin init skipped or failed:', err.message);
   }
 }
@@ -31,8 +30,7 @@ export async function verifyFirebaseIdToken(req) {
   }
   const idToken = authHeader.split(' ')[1];
   try {
-    const decoded = await admin.auth().verifyIdToken(idToken);
-    return decoded;  // Contains at least `{ uid, ... }`
+    return await admin.auth().verifyIdToken(idToken);
   } catch (err) {
     console.error('verifyFirebaseIdToken error:', err);
     return null;
@@ -56,7 +54,7 @@ export async function verifyFirebaseIdToken(req) {
  *
  * Where BODY_HASH = sha256Hex(JSON.stringify(body||{}))
  *
- * On success returns `{ ok: true, device }` where `device` is the DB row
+ * On success returns `{ ok: true, device }`
  * On failure returns `{ ok: false, error: <message>, status: <httpStatus> }`
  */
 export async function verifySignedRequest(req, { expectedPath }) {
@@ -89,7 +87,7 @@ export async function verifySignedRequest(req, { expectedPath }) {
     return { ok: false, error: 'Timestamp out of range', status: 401 };
   }
 
-  // Build sign base
+  // Build the signBase string
   const method = req.method;
   const path = new URL(req.url, 'http://localhost').pathname;
   if (expectedPath && path !== expectedPath) {
@@ -116,7 +114,7 @@ export async function verifySignedRequest(req, { expectedPath }) {
     return { ok: false, error: 'Device missing pubkey', status: 401 };
   }
 
-  // Prevent replay via nonce table
+  // Prevent replay via nonce insertion
   const { error: nonceErr } = await DB.insertNonce(nonce, device_id, parseInt(ts, 10));
   if (nonceErr) {
     console.error('🐛 Nonce already used:', nonceErr);
