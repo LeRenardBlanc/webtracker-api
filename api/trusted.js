@@ -1,30 +1,19 @@
-import { buffer } from 'micro';
-export const config = { api: { bodyParser: false } };
-
 import { handleCors, jsonErr, jsonOk } from '../utils/response.js';
 import { verifyFirebaseIdToken, verifySignedRequest } from '../utils/auth.js';
 import { supabase, DB } from '../utils/db.js';
 
 export default async function handler(req, res) {
+  // Handle CORS preflight & headers
   if (handleCors(req, res)) return;
 
   console.log(`🔔 [trusted] ${req.method} ${req.url}`);
 
-  // Attach rawBody for signature verification on POST and DELETE
-  if (req.method === 'POST' || req.method === 'DELETE') {
-    const buf = await buffer(req);
-    const rawText = buf.toString() || '';
-    req.rawBody = rawText;
-    try {
-      req.body = rawText ? JSON.parse(rawText) : {};
-    } catch {
-      req.body = {};
-    }
-  }
+  // At this point express.json() (in server.js) has already parsed JSON
+  // and stashed the raw body buffer on req.rawBody for signature verification.
 
-  // Authentication
+  // Authentication: Firebase ID token OR device signature
   let userUuid = null;
-  let device   = null;
+  let device = null;
 
   const fb = await verifyFirebaseIdToken(req);
   if (fb) {
@@ -50,12 +39,13 @@ export default async function handler(req, res) {
     return jsonErr(res, 'Unauthorized', 401);
   }
 
-  // Determine owners list
+  // Build list of owner IDs
   const owners = [];
   if (userUuid) owners.push(userUuid);
   if (device?.user_id) owners.push(device.user_id);
   if (device?.device_id) owners.push(device.device_id);
 
+  // GET /api/trusted — list trusted places
   if (req.method === 'GET') {
     console.log('🔍 Listing trusted places for owners:', owners);
     const { data, error } = await supabase
@@ -70,11 +60,12 @@ export default async function handler(req, res) {
     return jsonOk(res, { trusted: data || [] });
   }
 
+  // POST /api/trusted — add a trusted place
   if (req.method === 'POST') {
-    const body = req.body;
-    const lat  = parseFloat(body.lat ?? body.latitude);
-    const lon  = parseFloat(body.lon ?? body.longitude);
-    const rad  = parseInt(body.radius_m ?? body.radius, 10) || 50;
+    const body = req.body || {};
+    const lat = parseFloat(body.lat ?? body.latitude);
+    const lon = parseFloat(body.lon ?? body.longitude);
+    const rad = parseInt(body.radius_m ?? body.radius, 10) || 50;
     const label = body.label ?? null;
 
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
@@ -102,8 +93,10 @@ export default async function handler(req, res) {
     return jsonOk(res, { trusted: inserted });
   }
 
+  // DELETE /api/trusted?id=...
   if (req.method === 'DELETE') {
-    const id = parseInt(new URL(req.url, 'http://localhost').searchParams.get('id') || '0', 10);
+    const urlObj = new URL(req.url, 'http://localhost');
+    const id = parseInt(urlObj.searchParams.get('id') || '0', 10);
     if (!id) return jsonErr(res, 'Missing id', 400);
 
     console.log('➖ Deleting trusted place id=', id, 'for owners', owners);
@@ -119,5 +112,6 @@ export default async function handler(req, res) {
     return jsonOk(res);
   }
 
+  // Method not allowed
   return jsonErr(res, 'Method not allowed', 405);
 }
