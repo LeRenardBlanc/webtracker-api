@@ -33,16 +33,32 @@ export default async function handler(req, res) {
       if (!type || !payload) return jsonErr(res, 'Missing type or payload');
 
       // Map Firebase uid -> users.id (uuid)
-      const { id: userUuid } = await DB.getUserUuidByFirebaseUid(user.uid);
+      const { id: userUuid, error: userLookupError } = await DB.getUserUuidByFirebaseUid(user.uid);
+      if (userLookupError) {
+        console.error('Error looking up user by Firebase UID:', userLookupError);
+        return jsonErr(res, 'Database error during user lookup', 500);
+      }
       if (!userUuid) return jsonErr(res, 'User not found in DB', 404);
+
+      // Ensure payload is stored as JSON
+      let jsonPayload;
+      try {
+        jsonPayload = typeof payload === 'string' ? JSON.parse(payload) : payload;
+      } catch (parseError) {
+        console.error('Error parsing payload as JSON:', parseError);
+        return jsonErr(res, 'Invalid payload format - must be valid JSON', 400);
+      }
 
       const { error } = await DB.insertNotification({
         user_id: userUuid,
         device_id: device_id || null,
         type,
-        payload
+        payload: jsonPayload
       });
-      if (error) return jsonErr(res, 'DB error inserting notification', 500);
+      if (error) {
+        console.error('Database error inserting notification:', error);
+        return jsonErr(res, 'DB error inserting notification', 500);
+      }
 
       return jsonOk(res, { success: true });
     }
