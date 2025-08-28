@@ -56,39 +56,40 @@ export default async function handler(req, res) {
         ? payloadObj
         : JSON.stringify(payloadObj);
 
-      // Helper to insert a single notification
-      const tryInsert = async (dId) => {
-        try {
-          const { error: insertErr } = await DB.insertNotification({
-            user_id: userUuid,
-            device_id: dId,
-            type,
-            payload
-          });
-          
-          if (insertErr) {
-            // Foreign key error means device doesn't exist
-            if (insertErr.code === '23503') {
-              console.log(`⚠️ Skipping notification for missing device ${dId}`);
-              return false;
-            }
-            throw insertErr;
-          }
-          return true;
-        } catch (e) {
-          console.error('❌ Error inserting notification:', e);
-          throw e;
-        }
-      };
-
       // Check if targeting specific device or broadcasting
       if (device_id) {
-        const success = await tryInsert(device_id);
-        if (!success) {
-          return jsonErr(res, `Device ${device_id} not found`, 404);
+        // Single device: First verify the device exists and belongs to this user
+        const { data: device, error: devErr } = await supabase
+          .from('devices')
+          .select('device_id')
+          .eq('device_id', device_id)
+          .eq('user_id', userUuid)
+          .eq('revoked', false)
+          .single();
+
+        if (devErr || !device) {
+          console.warn(`⚠️ Device ${device_id} not found or not owned by user`);
+          return jsonErr(res, `Device not found or unauthorized`, 404);
         }
+
+        // Now insert the notification
+        const { error: insertErr } = await DB.insertNotification({
+          user_id: userUuid,
+          device_id,
+          type,
+          payload
+        });
+
+        if (insertErr) {
+          console.error('❌ Error inserting notification:', insertErr);
+          return jsonErr(res, 'Failed to insert notification', 500);
+        }
+
+        console.log(`📱 Notification sent to device ${device_id}`);
+        return jsonOk(res);
+
       } else {
-        // Broadcast to all active devices for this user
+        // Broadcast: Get all active devices for this user
         const { data: devices, error: devErr } = await supabase
           .from('devices')
           .select('device_id')
@@ -101,22 +102,34 @@ export default async function handler(req, res) {
         }
 
         if (!devices || devices.length === 0) {
-          return jsonErr(res, 'No devices found for user', 404); 
+          return jsonErr(res, 'No active devices found for user', 404);
         }
 
-        let insertedCount = 0;
-        for (const d of devices) {
-          const success = await tryInsert(d.device_id);
-          if (success) insertedCount++;
+        // Insert notification for each device
+        let successCount = 0;
+        for (const device of devices) {
+          const { error: insertErr } = await DB.insertNotification({
+            user_id: userUuid,
+            device_id: device.device_id,
+            type,
+            payload
+          });
+          
+          if (insertErr) {
+            console.warn(`⚠️ Failed to send notification to device ${device.device_id}:`, insertErr);
+          } else {
+            successCount++;
+          }
         }
 
-        console.log(`📱 Broadcast notification to ${insertedCount}/${devices.length} devices`);
-        if (insertedCount === 0) {
-          return jsonErr(res, 'No active devices found', 404);
+        console.log(`📱 Broadcast notification to ${successCount}/${devices.length} devices`);
+        
+        if (successCount === 0) {
+          return jsonErr(res, 'Failed to send notifications to any device', 500);
         }
+
+        return jsonOk(res);
       }
-
-      return jsonOk(res, { success: true });
     }
 
     return jsonErr(res, 'Method not allowed', 405);
