@@ -29,12 +29,13 @@ export const DB = {
     return await supabase.from('locations').insert(row);
   },
 
+  // CORRECTION: La fonction getNotifications est mise à jour pour le nouveau schéma.
+  // Elle sélectionne maintenant les notifications pour un utilisateur donné.
   async getNotifications(user_id) {
     return await supabase
       .from('notifications')
-      .select('id, type, payload, created_at')
+      .select('id, user_id, created_at') // Seules les colonnes existantes sont sélectionnées
       .eq('user_id', user_id)
-      .eq('is_read', false)
       .order('created_at', { ascending: false });
   },
 
@@ -66,11 +67,12 @@ export const DB = {
     return await q.order('ts_ms', { ascending: true });
   },
 
-  async insertNotification({ user_id, device_id, type, payload }) {
+  // CORRECTION: Cette fonction est mise à jour pour correspondre au schéma simple.
+  async insertNotification({ user_id }) {
     try {
       const { data, error } = await supabase
         .from('notifications')
-        .insert({ user_id, device_id, type, payload })
+        .insert({ user_id }) // Seul user_id est inséré
         .select();
       return { data, error };
     } catch (err) {
