@@ -1,28 +1,45 @@
 // Methods:
-//  - POST /api/trusted — requires Firebase Auth or deviceId
-//  - DELETE /api/trusted?id=123 — requires Firebase Auth or deviceId
+//  - GET /api/trusted — list for user (Firebase) or device (signed)
+//  - POST /api/trusted — add (Firebase or signed)
+//  - DELETE /api/trusted?id=123 — delete (Firebase or signed)
 import { handleCors, jsonErr, jsonOk } from '../utils/response.js';
-import { verifyFirebaseIdToken } from '../utils/auth.js';
-import { supabase } from '../utils/db.js';
+import { verifyFirebaseIdToken, verifySignedRequest } from '../utils/auth.js';
+import { supabase, DB } from '../utils/db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
 
-  // On essaye d'identifier soit via Firebase, soit via deviceId
-  let userId = null;
-  let deviceId = null;
+  // Identify caller
+  let userUuid = null;
+  let device = null;
 
-  if (req.headers.authorization?.startsWith('Bearer ')) {
-    const idToken = req.headers.authorization.split(' ')[1];
-    const user = await verifyFirebaseIdToken({ headers: { authorization: `Bearer ${idToken}` } });
-    if (user) userId = user.uid;
+  const fb = await verifyFirebaseIdToken(req);
+  if (fb) {
+    const { id } = await DB.getUserUuidByFirebaseUid(fb.uid);
+    userUuid = id;
+  } else {
+    const vr = await verifySignedRequest(req, { expectedPath: '/api/trusted' });
+    if (vr.ok) device = vr.device;
+  }
+  if (!userUuid && !device) return jsonErr(res, 'Unauthorized', 401);
+
+  // Build allowed owner ids (support legacy rows written with device_id)
+  const ownerCandidates = [];
+  if (userUuid) ownerCandidates.push(userUuid);
+  if (device) {
+    if (device.user_id) ownerCandidates.push(device.user_id);
+    if (device.device_id) ownerCandidates.push(device.device_id); // legacy
   }
 
-  if (!userId && req.query.device_id) {
-    deviceId = req.query.device_id;
+  if (req.method === 'GET') {
+    const { data, error } = await supabase
+      .from('trusted_places')
+      .select('id, label, lat, lon, radius_m, created_at')
+      .in('user_id', ownerCandidates.length ? ownerCandidates : ['__none__'])
+      .order('created_at', { ascending: false });
+    if (error) return jsonErr(res, 'Select failed', 500);
+    return jsonOk(res, { trusted: data || [] });
   }
-
-  if (!userId && !deviceId) return jsonErr(res, 'Unauthorized', 401);
 
   if (req.method === 'POST') {
     let data;
@@ -33,19 +50,20 @@ export default async function handler(req, res) {
     }
 
     const label = data.label || null;
-    const lat = parseFloat(data.lat);
-    const lon = parseFloat(data.lon);
-    const radius = data.radius_m != null ? parseInt(data.radius_m, 10) : 50;
+    // Accept both {lat,lon,radius_m} and {latitude,longitude,radius}
+    const lat = parseFloat(data.lat ?? data.latitude);
+    const lon = parseFloat(data.lon ?? data.longitude);
+    const radius = data.radius_m != null ? parseInt(data.radius_m, 10)
+      : (data.radius != null ? parseInt(data.radius, 10) : 50);
 
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return jsonErr(res, 'Missing lat/lon');
 
-    // Stockage: si userId dispo, on l'utilise, sinon deviceId
     const row = {
-      user_id: userId || deviceId,
+      user_id: userUuid || device.user_id,
       label,
       lat,
       lon,
-      radius_m: radius,
+      radius_m: Number.isFinite(radius) ? radius : 50,
       created_at: new Date().toISOString()
     };
 
@@ -59,12 +77,11 @@ export default async function handler(req, res) {
     const id = parseInt(new URL(req.url, 'http://localhost').searchParams.get('id') || '0', 10);
     if (!id) return jsonErr(res, 'Missing id');
 
-    // Supprimer seulement si userId ou deviceId correspond
     const { error } = await supabase
       .from('trusted_places')
       .delete()
       .eq('id', id)
-      .eq('user_id', userId || deviceId);
+      .in('user_id', ownerCandidates.length ? ownerCandidates : ['__none__']);
 
     if (error) return jsonErr(res, 'Delete failed', 500);
     return jsonOk(res, {});
