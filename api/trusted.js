@@ -1,7 +1,3 @@
-// Methods:
-//  - GET /api/trusted — list for user (Firebase) or device (signed)
-//  - POST /api/trusted — add (Firebase or signed)
-//  - DELETE /api/trusted?id=123 — delete (Firebase or signed)
 import { handleCors, jsonErr, jsonOk } from '../utils/response.js';
 import { verifyFirebaseIdToken, verifySignedRequest } from '../utils/auth.js';
 import { supabase, DB } from '../utils/db.js';
@@ -9,82 +5,107 @@ import { supabase, DB } from '../utils/db.js';
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
 
-  // Identify caller
+  console.log(`🔔 [trusted] ${req.method} ${req.url}`);
+
+  // authentication
   let userUuid = null;
-  let device = null;
+  let device   = null;
 
   const fb = await verifyFirebaseIdToken(req);
   if (fb) {
-    const { id } = await DB.getUserUuidByFirebaseUid(fb.uid);
+    console.log('➡️ Authenticated via Firebase, uid=', fb.uid);
+    const { id, error: uidErr } = await DB.getUserUuidByFirebaseUid(fb.uid);
+    if (uidErr) {
+      console.error('🚫 DB error fetching user UUID:', uidErr);
+      return jsonErr(res, 'DB error', 500);
+    }
     userUuid = id;
   } else {
     const vr = await verifySignedRequest(req, { expectedPath: '/api/trusted' });
-    if (vr.ok) device = vr.device;
+    if (vr.ok) {
+      console.log('➡️ Authenticated via device signature');
+      device = vr.device;
+    } else {
+      console.warn('🚫 Signed auth failed:', vr.error);
+    }
   }
-  if (!userUuid && !device) return jsonErr(res, 'Unauthorized', 401);
 
-  // Build allowed owner ids (support legacy rows written with device_id)
-  const ownerCandidates = [];
-  if (userUuid) ownerCandidates.push(userUuid);
-  if (device) {
-    if (device.user_id) ownerCandidates.push(device.user_id);
-    if (device.device_id) ownerCandidates.push(device.device_id); // legacy
+  if (!userUuid && !device) {
+    console.warn('🚫 Unauthorized call to /api/trusted');
+    return jsonErr(res, 'Unauthorized', 401);
   }
+
+  // determine owner IDs
+  const owners = [];
+  if (userUuid) owners.push(userUuid);
+  if (device?.user_id) owners.push(device.user_id);
+  if (device?.device_id) owners.push(device.device_id);
 
   if (req.method === 'GET') {
+    console.log('🔍 Listing trusted places for owners:', owners);
     const { data, error } = await supabase
       .from('trusted_places')
       .select('id, label, lat, lon, radius_m, created_at')
-      .in('user_id', ownerCandidates.length ? ownerCandidates : ['__none__'])
+      .in('user_id', owners.length ? owners : ['__none__'])
       .order('created_at', { ascending: false });
-    if (error) return jsonErr(res, 'Select failed', 500);
+    if (error) {
+      console.error('🚫 Select failed:', error);
+      return jsonErr(res, 'Select failed', 500);
+    }
     return jsonOk(res, { trusted: data || [] });
   }
 
   if (req.method === 'POST') {
-    let data;
+    let body;
     try {
-      data = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
+      body = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
     } catch {
       return jsonErr(res, 'Invalid JSON');
     }
+    const lat  = parseFloat(body.lat ?? body.latitude);
+    const lon  = parseFloat(body.lon ?? body.longitude);
+    const rad  = parseInt(body.radius_m ?? body.radius, 10) || 50;
+    const label = body.label ?? null;
 
-    const label = data.label || null;
-    // Accept both {lat,lon,radius_m} and {latitude,longitude,radius}
-    const lat = parseFloat(data.lat ?? data.latitude);
-    const lon = parseFloat(data.lon ?? data.longitude);
-    const radius = data.radius_m != null ? parseInt(data.radius_m, 10)
-      : (data.radius != null ? parseInt(data.radius, 10) : 50);
-
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return jsonErr(res, 'Missing lat/lon');
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      return jsonErr(res, 'Missing lat/lon', 400);
+    }
 
     const row = {
       user_id: userUuid || device.user_id,
       label,
       lat,
       lon,
-      radius_m: Number.isFinite(radius) ? radius : 50,
+      radius_m: rad,
       created_at: new Date().toISOString()
     };
-
-    const { data: inserted, error } = await supabase.from('trusted_places').insert(row).select().single();
-    if (error) return jsonErr(res, 'Insert failed', 500);
-
+    console.log('➕ Inserting trusted place:', row);
+    const { data: inserted, error } = await supabase
+      .from('trusted_places')
+      .insert(row)
+      .select()
+      .single();
+    if (error) {
+      console.error('🚫 Insert failed:', error);
+      return jsonErr(res, 'Insert failed', 500);
+    }
     return jsonOk(res, { trusted: inserted });
   }
 
   if (req.method === 'DELETE') {
     const id = parseInt(new URL(req.url, 'http://localhost').searchParams.get('id') || '0', 10);
-    if (!id) return jsonErr(res, 'Missing id');
-
+    if (!id) return jsonErr(res, 'Missing id', 400);
+    console.log('➖ Deleting trusted place id=', id, 'for owners', owners);
     const { error } = await supabase
       .from('trusted_places')
       .delete()
       .eq('id', id)
-      .in('user_id', ownerCandidates.length ? ownerCandidates : ['__none__']);
-
-    if (error) return jsonErr(res, 'Delete failed', 500);
-    return jsonOk(res, {});
+      .in('user_id', owners.length ? owners : ['__none__']);
+    if (error) {
+      console.error('🚫 Delete failed:', error);
+      return jsonErr(res, 'Delete failed', 500);
+    }
+    return jsonOk(res);
   }
 
   return jsonErr(res, 'Method not allowed', 405);
