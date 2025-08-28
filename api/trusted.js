@@ -1,3 +1,6 @@
+import { buffer } from 'micro';
+export const config = { api: { bodyParser: false } };
+
 import { handleCors, jsonErr, jsonOk } from '../utils/response.js';
 import { verifyFirebaseIdToken, verifySignedRequest } from '../utils/auth.js';
 import { supabase, DB } from '../utils/db.js';
@@ -7,7 +10,19 @@ export default async function handler(req, res) {
 
   console.log(`🔔 [trusted] ${req.method} ${req.url}`);
 
-  // authentication
+  // Attach rawBody for signature verification on POST and DELETE
+  if (req.method === 'POST' || req.method === 'DELETE') {
+    const buf = await buffer(req);
+    const rawText = buf.toString() || '';
+    req.rawBody = rawText;
+    try {
+      req.body = rawText ? JSON.parse(rawText) : {};
+    } catch {
+      req.body = {};
+    }
+  }
+
+  // Authentication
   let userUuid = null;
   let device   = null;
 
@@ -35,7 +50,7 @@ export default async function handler(req, res) {
     return jsonErr(res, 'Unauthorized', 401);
   }
 
-  // determine owner IDs
+  // Determine owners list
   const owners = [];
   if (userUuid) owners.push(userUuid);
   if (device?.user_id) owners.push(device.user_id);
@@ -56,12 +71,7 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    let body;
-    try {
-      body = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
-    } catch {
-      return jsonErr(res, 'Invalid JSON');
-    }
+    const body = req.body;
     const lat  = parseFloat(body.lat ?? body.latitude);
     const lon  = parseFloat(body.lon ?? body.longitude);
     const rad  = parseInt(body.radius_m ?? body.radius, 10) || 50;
@@ -95,6 +105,7 @@ export default async function handler(req, res) {
   if (req.method === 'DELETE') {
     const id = parseInt(new URL(req.url, 'http://localhost').searchParams.get('id') || '0', 10);
     if (!id) return jsonErr(res, 'Missing id', 400);
+
     console.log('➖ Deleting trusted place id=', id, 'for owners', owners);
     const { error } = await supabase
       .from('trusted_places')
