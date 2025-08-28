@@ -1,22 +1,7 @@
 import admin from 'firebase-admin';
 import { supabase } from '../utils/db.js';
 import { jsonOk, jsonErr, handleCors } from '../utils/response.js';
-
-// initialize firebase-admin if needed
-if (!admin.apps?.length) {
-  const pk = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-  try {
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: pk
-      })
-    });
-  } catch (e) {
-    // ignore if already initialized differently
-  }
-}
+import { verifyFirebaseIdToken } from '../utils/auth.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
@@ -26,7 +11,9 @@ export default async function handler(req, res) {
     const { idToken, email } = req.body;
     if (!idToken) return jsonErr(res, 'idToken missing');
 
-    const decoded = await admin.auth().verifyIdToken(idToken);
+    const decoded = await verifyFirebaseIdToken(req);
+    if (!decoded) return jsonErr(res, 'Invalid or expired token', 401);
+    
     const uid = decoded.uid;
 
     // Align upsert with actual DB schema:

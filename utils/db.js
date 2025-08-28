@@ -3,9 +3,20 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-export const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-  auth: { persistSession: false },
-});
+let supabase;
+if (!supabaseUrl || !supabaseServiceKey) {
+  console.warn('Warning: Supabase credentials not configured. Database operations will fail.');
+  // Create a mock client to prevent import errors
+  supabase = {
+    from: () => ({ select: () => Promise.resolve({ data: null, error: new Error('Supabase not configured') }) })
+  };
+} else {
+  supabase = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: { persistSession: false },
+  });
+}
+
+export { supabase };
 
 export default supabase;
 
