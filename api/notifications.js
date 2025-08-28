@@ -33,7 +33,7 @@ export default async function handler(req, res) {
       if (!type || !payload) return jsonErr(res, 'Missing type or payload');
 
       // Insère la notification dans la table pour tous les devices de l'utilisateur
-      const { error } = await DB.insertNotification(user.uid, type, payload, device_id || null);
+      const { error } = await DB.insertNotification({ user_id: user.uid, device_id: device_id || null, type, payload });
       if (error) return jsonErr(res, 'DB error inserting notification', 500);
 
       return jsonOk(res, { success: true });
