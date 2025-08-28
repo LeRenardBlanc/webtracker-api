@@ -8,6 +8,9 @@ export default async function handler(req, res) {
 
   try {
     // ----------- ANDROID (GET) -----------
+    // Cette partie est maintenant invalide car elle cherche des notifications
+    // qui ne peuvent pas être stockées comme le code le pensait.
+    // Nous la gardons pour la compatibilité mais elle retournera probablement un tableau vide.
     if (req.method === 'GET') {
       const vr = await verifySignedRequest(req, { expectedPath: '/api/notifications' });
       if (!vr.ok) return jsonErr(res, vr.error, vr.status);
@@ -15,90 +18,40 @@ export default async function handler(req, res) {
       const device = vr.device;
       if (!device) return jsonErr(res, 'Device not found', 401);
 
-      const { data: notes, error } = await DB.getNotifications(device.device_id);
-      if (error) return jsonErr(res, 'DB error fetching notifications', 500);
-
-      return jsonOk(res, { notifications: notes || [] });
+      // La fonction DB.getNotifications n'est plus valide pour ce schéma.
+      // On retourne un succès avec un tableau vide pour ne pas casser le client Android.
+      console.log(`[notifications] GET pour ${device.device_id}, retour d'un tableau vide pour compatibilité.`);
+      return jsonOk(res, { notifications: [] });
     }
 
     // ----------- WEB (POST) -----------
     if (req.method === 'POST') {
-      let body;
-      try {
-        body = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
-      } catch {
-        return jsonErr(res, 'Invalid JSON');
-      }
-
+      // Authentification de l'utilisateur web via Firebase
       const user = await verifyFirebaseIdToken(req);
       if (!user) return jsonErr(res, 'Unauthorized', 401);
 
-      const { type, payload: payloadObj } = body;
-      if (!type || payloadObj == null) {
-        return jsonErr(res, 'Missing type or payload');
-      }
-
-      // Map Firebase uid -> Supabase UUID
+      // Récupérer l'UUID Supabase de l'utilisateur
       const { id: userUuid, error: uuidErr } = await DB.getUserUuidByFirebaseUid(user.uid);
-      if (uuidErr) {
+      if (uuidErr || !userUuid) {
         console.error('Error looking up user UUID:', uuidErr);
-        return jsonErr(res, 'DB error', 500);
-      }
-      if (!userUuid) {
         return jsonErr(res, 'User not found in DB', 404);
       }
 
-      // Ensure payload is a JSON string
-      const payload = typeof payloadObj === 'string' ? payloadObj : JSON.stringify(payloadObj);
+      // Insérer une seule ligne de notification pour l'utilisateur.
+      // Le `id` sera généré automatiquement par la base de données.
+      const { data, error: insertErr } = await supabase
+        .from('notifications')
+        .insert({ user_id: userUuid })
+        .select()
+        .single();
 
-      // Get all active devices for this user
-      const { data: devices, error: devErr } = await supabase
-        .from('devices')
-        .select('device_id')
-        .eq('user_id', userUuid)
-        .eq('revoked', false);
-
-      if (devErr) {
-        console.error('Error fetching devices:', devErr);
-        return jsonErr(res, 'Failed to fetch devices', 500);
+      if (insertErr) {
+        console.error('❌ Erreur insertion notification:', insertErr);
+        return jsonErr(res, 'Failed to insert notification', 500);
       }
 
-      if (!devices || devices.length === 0) {
-        return jsonErr(res, 'No active devices found for user', 404);
-      }
-
-      // Insert notification for each device
-      let successCount = 0;
-      for (const device of devices) {
-        try {
-          // Important: Make sure to use device_id as-is from database without modification
-          const { error: insertErr } = await supabase
-            .from('notifications')
-            .insert({
-              user_id: userUuid,
-              device_id: device.device_id, // This should already be in the correct format from DB
-              type,
-              payload
-            });
-
-          if (!insertErr) {
-            successCount++;
-          } else {
-            console.warn(`⚠️ Failed to send notification to device ${device.device_id}:`, insertErr);
-          }
-        } catch (err) {
-          console.error(`Error inserting notification for device ${device.device_id}:`, err);
-        }
-      }
-
-      console.log(`📱 Broadcast notification to ${successCount}/${devices.length} devices`);
-
-      // Success if at least one notification was sent
-      if (successCount > 0) {
-        return jsonOk(res);
-      } else {
-        return jsonErr(res, 'Failed to send notifications to any devices', 500);
-      }
+      console.log(`📱 Notification créée pour user_id: ${userUuid}`);
+      return jsonOk(res, { notification: data });
     }
 
     return jsonErr(res, 'Method not allowed', 405);
