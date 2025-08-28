@@ -55,21 +55,34 @@ export default async function handler(req, res) {
         ? payloadObj
         : JSON.stringify(payloadObj);
 
-      // If a specific device_id is provided, insert one notification.
-      // Otherwise broadcast to all the user's active devices.
-      if (device_id) {
+      // Helper to insert a single notification, skipping missing devices
+      const tryInsert = async (dId) => {
         const { error: insertErr } = await DB.insertNotification({
           user_id: userUuid,
-          device_id,
+          device_id: dId,
           type,
           payload
         });
         if (insertErr) {
-          console.error('Error inserting notification:', insertErr);
+          // Foreign key error: device not present
+          if (insertErr.code === '23503') {
+            console.warn(`Skipping notification for missing device ${dId}`);
+            return;
+          }
+          throw insertErr;
+        }
+      };
+
+      if (device_id) {
+        // Send to specific device
+        try {
+          await tryInsert(device_id);
+        } catch (e) {
+          console.error('Error inserting notification:', e);
           return jsonErr(res, 'DB error inserting notification', 500);
         }
       } else {
-        // Fetch all non-revoked devices for this user
+        // Broadcast to all non-revoked devices for this user
         const { data: devices, error: devErr } = await supabase
           .from('devices')
           .select('device_id')
@@ -82,16 +95,11 @@ export default async function handler(req, res) {
         if (!devices || devices.length === 0) {
           return jsonErr(res, 'No devices found for user', 404);
         }
-        // Insert a notification for each device
         for (const d of devices) {
-          const { error: insertErr } = await DB.insertNotification({
-            user_id: userUuid,
-            device_id: d.device_id,
-            type,
-            payload
-          });
-          if (insertErr) {
-            console.error('Error inserting broadcast notification for device', d.device_id, insertErr);
+          try {
+            await tryInsert(d.device_id);
+          } catch (e) {
+            console.error('Error inserting broadcast notification for device', d.device_id, e);
             return jsonErr(res, 'DB error inserting notification', 500);
           }
         }
