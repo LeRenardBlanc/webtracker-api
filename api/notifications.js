@@ -4,6 +4,7 @@ import { DB, supabase } from '../utils/db.js';
 
 export default async function handler(req, res) {
   if (handleCors(req, res)) return;
+  console.log(`🔔 [notifications] ${req.method} ${req.url}`);
 
   try {
     // ----------- ANDROID (GET) -----------
@@ -14,7 +15,7 @@ export default async function handler(req, res) {
       const device = vr.device;
       if (!device) return jsonErr(res, 'Device not found', 401);
 
-      const { data: notes, error } = await DB.getNotifications(device.user_id);
+      const { data: notes, error } = await DB.getNotifications(device.device_id);
       if (error) return jsonErr(res, 'DB error fetching notifications', 500);
 
       return jsonOk(res, { notifications: notes || [] });
@@ -55,53 +56,63 @@ export default async function handler(req, res) {
         ? payloadObj
         : JSON.stringify(payloadObj);
 
-      // Helper to insert a single notification, skipping missing devices
+      // Helper to insert a single notification
       const tryInsert = async (dId) => {
-        const { error: insertErr } = await DB.insertNotification({
-          user_id: userUuid,
-          device_id: dId,
-          type,
-          payload
-        });
-        if (insertErr) {
-          // Foreign key error: device not present
-          if (insertErr.code === '23503') {
-            console.warn(`Skipping notification for missing device ${dId}`);
-            return;
+        try {
+          const { error: insertErr } = await DB.insertNotification({
+            user_id: userUuid,
+            device_id: dId,
+            type,
+            payload
+          });
+          
+          if (insertErr) {
+            // Foreign key error means device doesn't exist
+            if (insertErr.code === '23503') {
+              console.log(`⚠️ Skipping notification for missing device ${dId}`);
+              return false;
+            }
+            throw insertErr;
           }
-          throw insertErr;
+          return true;
+        } catch (e) {
+          console.error('❌ Error inserting notification:', e);
+          throw e;
         }
       };
 
+      // Check if targeting specific device or broadcasting
       if (device_id) {
-        // Send to specific device
-        try {
-          await tryInsert(device_id);
-        } catch (e) {
-          console.error('Error inserting notification:', e);
-          return jsonErr(res, 'DB error inserting notification', 500);
+        const success = await tryInsert(device_id);
+        if (!success) {
+          return jsonErr(res, `Device ${device_id} not found`, 404);
         }
       } else {
-        // Broadcast to all non-revoked devices for this user
+        // Broadcast to all active devices for this user
         const { data: devices, error: devErr } = await supabase
           .from('devices')
           .select('device_id')
           .eq('user_id', userUuid)
           .eq('revoked', false);
+
         if (devErr) {
           console.error('Error fetching devices for broadcast:', devErr);
           return jsonErr(res, 'DB error fetching devices', 500);
         }
+
         if (!devices || devices.length === 0) {
-          return jsonErr(res, 'No devices found for user', 404);
+          return jsonErr(res, 'No devices found for user', 404); 
         }
+
+        let insertedCount = 0;
         for (const d of devices) {
-          try {
-            await tryInsert(d.device_id);
-          } catch (e) {
-            console.error('Error inserting broadcast notification for device', d.device_id, e);
-            return jsonErr(res, 'DB error inserting notification', 500);
-          }
+          const success = await tryInsert(d.device_id);
+          if (success) insertedCount++;
+        }
+
+        console.log(`📱 Broadcast notification to ${insertedCount}/${devices.length} devices`);
+        if (insertedCount === 0) {
+          return jsonErr(res, 'No active devices found', 404);
         }
       }
 
@@ -110,7 +121,7 @@ export default async function handler(req, res) {
 
     return jsonErr(res, 'Method not allowed', 405);
   } catch (e) {
-    console.error('notifications API unexpected error:', e);
+    console.error('🚫 notifications API unexpected error:', e);
     return jsonErr(res, 'Internal server error', 500);
   }
 }
