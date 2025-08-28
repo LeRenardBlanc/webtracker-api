@@ -71,11 +71,14 @@ export default async function handler(req, res) {
       let successCount = 0;
       for (const device of devices) {
         try {
+          // Normalize device_id by removing hyphens to match database format
+          const normalizedDeviceId = device.device_id.replace(/-/g, '');
+          
           const { error: insertErr } = await supabase
             .from('notifications')
             .insert({
               user_id: userUuid,
-              device_id: device.device_id,
+              device_id: normalizedDeviceId,
               type,
               payload
             });
@@ -83,7 +86,7 @@ export default async function handler(req, res) {
           if (!insertErr) {
             successCount++;
           } else {
-            console.warn(`⚠️ Failed to insert notification for device ${device.device_id}:`, insertErr);
+            console.warn(`⚠️ Failed to send notification to device ${device.device_id}:`, insertErr);
           }
         } catch (err) {
           console.error(`Error inserting notification for device ${device.device_id}:`, err);
