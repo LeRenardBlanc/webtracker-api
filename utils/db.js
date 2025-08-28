@@ -68,9 +68,15 @@ export const DB = {
 
   async insertNotification({ user_id, device_id, type, payload }) {
     try {
+      // Only include device_id in the insert object if it's non-null
+      const insertObj = { user_id, type, payload };
+      if (device_id != null) {
+        insertObj.device_id = device_id;
+      }
+      
       const { data, error } = await supabase
         .from('notifications')
-        .insert({ user_id, device_id, type, payload })
+        .insert(insertObj)
         .select();
       return { data, error };
     } catch (err) {
