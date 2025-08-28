@@ -5,24 +5,39 @@ import { sha256Base16, verifyEd25519Signature } from './crypto.js';
 // Init Firebase Admin once
 if (!admin.apps.length) {
   const { FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY } = process.env;
-  const pk = FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: FIREBASE_PROJECT_ID,
-      clientEmail: FIREBASE_CLIENT_EMAIL,
-      privateKey: pk
-    })
-  });
+  
+  if (!FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
+    console.warn('Warning: Firebase credentials not fully configured. Firebase auth will not work.');
+  } else {
+    try {
+      const pk = FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+      admin.initializeApp({
+        credential: admin.credential.cert({
+          projectId: FIREBASE_PROJECT_ID,
+          clientEmail: FIREBASE_CLIENT_EMAIL,
+          privateKey: pk
+        })
+      });
+    } catch (error) {
+      console.error('Failed to initialize Firebase Admin:', error.message);
+    }
+  }
 }
 
 export async function verifyFirebaseIdToken(req) {
+  if (!admin.apps.length) {
+    console.warn('Firebase Admin not initialized, cannot verify tokens');
+    return null;
+  }
+  
   const auth = req.headers['authorization'] || req.headers['Authorization'];
   if (!auth || !auth.startsWith('Bearer ')) return null;
   const token = auth.substring(7);
   try {
     const decoded = await admin.auth().verifyIdToken(token);
     return decoded; // includes uid, phone_number (if verified), etc.
-  } catch {
+  } catch (error) {
+    console.warn('Firebase token verification failed:', error.message);
     return null;
   }
 }

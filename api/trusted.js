@@ -1,4 +1,5 @@
 // Methods:
+//  - GET /api/trusted — requires Firebase Auth or deviceId
 //  - POST /api/trusted — requires Firebase Auth or deviceId
 //  - DELETE /api/trusted?id=123 — requires Firebase Auth or deviceId
 import { handleCors, jsonErr, jsonOk } from '../utils/response.js';
@@ -13,16 +14,29 @@ export default async function handler(req, res) {
   let deviceId = null;
 
   if (req.headers.authorization?.startsWith('Bearer ')) {
-    const idToken = req.headers.authorization.split(' ')[1];
-    const user = await verifyFirebaseIdToken({ headers: { authorization: `Bearer ${idToken}` } });
+    const user = await verifyFirebaseIdToken(req);
     if (user) userId = user.uid;
   }
 
-  if (!userId && req.query.device_id) {
-    deviceId = req.query.device_id;
+  if (!userId) {
+    // Try to get device_id from query parameters
+    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    deviceId = url.searchParams.get('device_id') || req.query?.device_id;
   }
 
   if (!userId && !deviceId) return jsonErr(res, 'Unauthorized', 401);
+
+  if (req.method === 'GET') {
+    // Retrieve trusted places for the user or device
+    const { data: trustedPlaces, error } = await supabase
+      .from('trusted_locations')
+      .select('*')
+      .eq('user_id', userId || deviceId)
+      .order('created_at', { ascending: false });
+
+    if (error) return jsonErr(res, 'Fetch failed', 500);
+    return jsonOk(res, { trusted_places: trustedPlaces || [] });
+  }
 
   if (req.method === 'POST') {
     let data;
@@ -49,7 +63,7 @@ export default async function handler(req, res) {
       created_at: new Date().toISOString()
     };
 
-    const { data: inserted, error } = await supabase.from('trusted_places').insert(row).select().single();
+    const { data: inserted, error } = await supabase.from('trusted_locations').insert(row).select().single();
     if (error) return jsonErr(res, 'Insert failed', 500);
 
     return jsonOk(res, { trusted: inserted });
@@ -61,7 +75,7 @@ export default async function handler(req, res) {
 
     // Supprimer seulement si userId ou deviceId correspond
     const { error } = await supabase
-      .from('trusted_places')
+      .from('trusted_locations')
       .delete()
       .eq('id', id)
       .eq('user_id', userId || deviceId);
