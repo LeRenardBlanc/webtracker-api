@@ -32,7 +32,7 @@ export const DB = {
   async getNotifications(user_id) {
     return await supabase
       .from('notifications')
-      .select('id, message, created_at')
+      .select('id, type, payload, created_at')
       .eq('user_id', user_id)
       .eq('is_read', false)
       .order('created_at', { ascending: false });
@@ -76,5 +76,14 @@ export const DB = {
     } catch (err) {
       return { data: null, error: err };
     }
+  },
+
+  async getUserUuidByFirebaseUid(firebase_uid) {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id')
+      .eq('firebase_uid', firebase_uid)
+      .single();
+    return { id: data?.id || null, error };
   },
 };
