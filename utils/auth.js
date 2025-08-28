@@ -89,16 +89,19 @@ export async function verifySignedRequest(req, { expectedPath }) {
 
   // Build the signBase string
   const method = req.method;
-  const path = new URL(req.url, 'http://localhost').pathname;
-  if (expectedPath && path !== expectedPath) {
-    console.error('🐛 Unexpected path:', path, 'expected', expectedPath);
+  const url = new URL(req.url, 'http://localhost');
+  const pathname = url.pathname;
+  const fullPath = pathname + url.search;
+  
+  if (expectedPath && pathname !== expectedPath) {
+    console.error('🐛 Unexpected path:', pathname, 'expected', expectedPath);
     return { ok: false, error: 'Bad request path', status: 400 };
   }
   const rawBody = typeof req.body === 'string'
     ? req.body
     : JSON.stringify(req.body || {});
   const bodyHash = sha256Base16(rawBody);
-  const signBase = `${method}\n${path}\n${ts}\n${nonce}\n${bodyHash}`;
+  const signBase = `${method}\n${fullPath}\n${ts}\n${nonce}\n${bodyHash}`;
 
   console.log('🐛 Computed signBase:', signBase);
 
