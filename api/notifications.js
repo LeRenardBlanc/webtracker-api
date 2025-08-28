@@ -36,13 +36,21 @@ export default async function handler(req, res) {
       const { id: userUuid } = await DB.getUserUuidByFirebaseUid(user.uid);
       if (!userUuid) return jsonErr(res, 'User not found in DB', 404);
 
-      const { error } = await DB.insertNotification({
-        user_id: userUuid,
-        device_id: device_id || null,
-        type,
-        payload
-      });
-      if (error) return jsonErr(res, 'DB error inserting notification', 500);
+      try {
+        const { error } = await DB.insertNotification({
+          user_id: userUuid,
+          device_id: device_id || null,
+          type,
+          payload
+        });
+        if (error) {
+          console.error('DB error inserting notification:', error);
+          return jsonErr(res, 'DB error inserting notification', 500);
+        }
+      } catch (err) {
+        console.error('Exception during notification insertion:', err);
+        return jsonErr(res, 'DB error inserting notification', 500);
+      }
 
       return jsonOk(res, { success: true });
     }
