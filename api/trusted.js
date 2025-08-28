@@ -7,7 +7,7 @@ export default async function handler(req, res) {
 
   console.log(`🔔 [trusted] ${req.method} ${req.url}`);
 
-  // Important: Pour les requêtes POST, on doit d'abord récupérer le corps brut
+  // Important: For POST requests, we must first capture the raw body
   let rawBody = '';
   if (req.method === 'POST') {
     rawBody = await new Promise((resolve, reject) => {
@@ -25,11 +25,11 @@ export default async function handler(req, res) {
     } catch (e) {
       req.body = {};
     }
-    // Sauvegarder le corps brut pour la vérification de signature
+    // Save raw body for signature verification
     req.rawBody = rawBody;
   }
 
-  // Authentification
+  // Authentication
   let userUuid = null;
   let device = null;
 
@@ -57,13 +57,13 @@ export default async function handler(req, res) {
     return jsonErr(res, 'Unauthorized', 401);
   }
 
-  // Build list of owner IDs
+  // Build list of owner IDs 
   const owners = [];
   if (userUuid) owners.push(userUuid);
   if (device?.user_id) owners.push(device.user_id);
   if (device?.device_id) owners.push(device.device_id);
 
-  // GET /api/trusted — list trusted places
+  // GET /api/trusted - list trusted places
   if (req.method === 'GET') {
     console.log('🔍 Listing trusted places for owners:', owners);
     const { data, error } = await supabase
@@ -78,13 +78,13 @@ export default async function handler(req, res) {
     return jsonOk(res, { trusted: data || [] });
   }
 
-  // POST /api/trusted — add a trusted place
+  // POST /api/trusted - add a trusted place 
   if (req.method === 'POST') {
     const body = req.body || {};
     const lat = parseFloat(body.lat ?? body.latitude);
     const lon = parseFloat(body.lon ?? body.longitude);
     const rad = parseInt(body.radius_m ?? body.radius, 10) || 50;
-    const label = body.label ?? null;
+    const label = body.label || 'Sans nom'; // Default label if none provided
 
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
       return jsonErr(res, 'Missing lat/lon', 400);
@@ -92,9 +92,9 @@ export default async function handler(req, res) {
 
     const row = {
       user_id: userUuid || device.user_id,
-      label,
+      label, // Now has default value
       lat,
-      lon,
+      lon, 
       radius_m: rad,
       created_at: new Date().toISOString()
     };
@@ -113,8 +113,7 @@ export default async function handler(req, res) {
 
   // DELETE /api/trusted?id=...
   if (req.method === 'DELETE') {
-    const urlObj = new URL(req.url, 'http://localhost');
-    const id = parseInt(urlObj.searchParams.get('id') || '0', 10);
+    const id = parseInt(new URL(req.url, 'http://localhost').searchParams.get('id') || '0', 10);
     if (!id) return jsonErr(res, 'Missing id', 400);
 
     console.log('➖ Deleting trusted place id=', id, 'for owners', owners);
