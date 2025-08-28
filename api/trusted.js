@@ -3,15 +3,33 @@ import { verifyFirebaseIdToken, verifySignedRequest } from '../utils/auth.js';
 import { supabase, DB } from '../utils/db.js';
 
 export default async function handler(req, res) {
-  // Handle CORS preflight & headers
   if (handleCors(req, res)) return;
 
   console.log(`🔔 [trusted] ${req.method} ${req.url}`);
 
-  // At this point express.json() (in server.js) has already parsed JSON
-  // and stashed the raw body buffer on req.rawBody for signature verification.
+  // Important: Pour les requêtes POST, on doit d'abord récupérer le corps brut
+  let rawBody = '';
+  if (req.method === 'POST') {
+    rawBody = await new Promise((resolve, reject) => {
+      let data = '';
+      req.on('data', chunk => {
+        data += chunk;
+      });
+      req.on('end', () => {
+        resolve(data);
+      });
+    });
+    
+    try {
+      req.body = JSON.parse(rawBody);
+    } catch (e) {
+      req.body = {};
+    }
+    // Sauvegarder le corps brut pour la vérification de signature
+    req.rawBody = rawBody;
+  }
 
-  // Authentication: Firebase ID token OR device signature
+  // Authentification
   let userUuid = null;
   let device = null;
 
@@ -112,6 +130,5 @@ export default async function handler(req, res) {
     return jsonOk(res);
   }
 
-  // Method not allowed
   return jsonErr(res, 'Method not allowed', 405);
 }
