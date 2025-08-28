@@ -9,7 +9,7 @@ export const supabase = createClient(supabaseUrl, supabaseServiceKey, {
 
 export default supabase;
 
-// Helpers for common queries (tables must exist in Supabase)
+// Helpers for common queries
 export const DB = {
   async getDevice(device_id) {
     return await supabase
@@ -20,8 +20,15 @@ export const DB = {
       .single();
   },
 
+  async getDevicesForUser(user_id) {
+    return await supabase
+      .from('devices')
+      .select('device_id')
+      .eq('user_id', user_id)
+      .eq('revoked', false);
+  },
+
   async insertNonce(nonce, device_id, ts) {
-    // Table nonces has a unique constraint on (nonce, device_id)
     return await supabase.from('nonces').insert({ nonce, device_id, ts });
   },
 
@@ -29,14 +36,27 @@ export const DB = {
     return await supabase.from('locations').insert(row);
   },
 
-  // CORRECTION: La fonction getNotifications est mise à jour pour le nouveau schéma.
-  // Elle sélectionne maintenant les notifications pour un utilisateur donné.
-  async getNotifications(user_id) {
+  // Récupère les notifications non lues pour un appareil spécifique
+  async getNotificationsForDevice(device_id) {
     return await supabase
       .from('notifications')
-      .select('id, user_id, created_at') // Seules les colonnes existantes sont sélectionnées
-      .eq('user_id', user_id)
-      .order('created_at', { ascending: false });
+      .select('id, type, payload')
+      .eq('device_id', device_id)
+      .eq('is_read', false)
+      .order('created_at', { ascending: true });
+  },
+
+  // Marque un lot de notifications comme lues
+  async markNotificationsAsRead(notificationIds) {
+    return await supabase
+      .from('notifications')
+      .update({ is_read: true })
+      .in('id', notificationIds);
+  },
+
+  // Insère un lot de notifications
+  async insertNotifications(notificationRows) {
+    return await supabase.from('notifications').insert(notificationRows);
   },
 
   async addTrusted(row) {
@@ -65,19 +85,6 @@ export const DB = {
     if (to_ms) q = q.lte('ts_ms', to_ms);
 
     return await q.order('ts_ms', { ascending: true });
-  },
-
-  // CORRECTION: Cette fonction est mise à jour pour correspondre au schéma simple.
-  async insertNotification({ user_id }) {
-    try {
-      const { data, error } = await supabase
-        .from('notifications')
-        .insert({ user_id }) // Seul user_id est inséré
-        .select();
-      return { data, error };
-    } catch (err) {
-      return { data: null, error: err };
-    }
   },
 
   async getUserUuidByFirebaseUid(firebase_uid) {
