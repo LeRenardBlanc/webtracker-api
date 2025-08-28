@@ -17,7 +17,21 @@ export default async function handler(req, res) {
       const { data: notes, error } = await DB.getNotifications(device.user_id);
       if (error) return jsonErr(res, 'DB error', 500);
 
-      return jsonOk(res, { notifications: notes || [] });
+      // Transform records: map message to payload when payload is missing
+      const transformedNotes = (notes || []).map(note => {
+        if (!note.payload && note.message) {
+          try {
+            note.payload = typeof note.message === 'string' ? JSON.parse(note.message) : note.message;
+          } catch {
+            note.payload = note.message; // fallback to raw message if JSON parsing fails
+          }
+        }
+        // Remove message field from response for cleaner API
+        const { message, ...cleanNote } = note;
+        return cleanNote;
+      });
+
+      return jsonOk(res, { notifications: transformedNotes });
     }
 
     // ----------- WEB (POST) -----------
