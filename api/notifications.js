@@ -25,18 +25,15 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       let body;
       try {
-        body = typeof req.body === 'object'
-          ? req.body
-          : JSON.parse(req.body || '{}');
+        body = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
       } catch {
         return jsonErr(res, 'Invalid JSON');
       }
 
-      // Authenticate via Firebase
       const user = await verifyFirebaseIdToken(req);
       if (!user) return jsonErr(res, 'Unauthorized', 401);
 
-      const { type, payload: payloadObj, device_id } = body;
+      const { type, payload: payloadObj } = body;
       if (!type || payloadObj == null) {
         return jsonErr(res, 'Missing type or payload');
       }
@@ -52,89 +49,60 @@ export default async function handler(req, res) {
       }
 
       // Ensure payload is a JSON string
-      const payload = typeof payloadObj === 'string'
-        ? payloadObj
-        : JSON.stringify(payloadObj);
+      const payload = typeof payloadObj === 'string' ? payloadObj : JSON.stringify(payloadObj);
 
-      // Check if targeting specific device or broadcasting
-      if (device_id) {
-        // Single device: First verify the device exists and belongs to this user
-        const { data: device, error: devErr } = await supabase
-          .from('devices')
-          .select('device_id')
-          .eq('device_id', device_id)
-          .eq('user_id', userUuid)
-          .eq('revoked', false)
-          .single();
+      // Get all active devices for this user
+      const { data: devices, error: devErr } = await supabase
+        .from('devices')
+        .select('device_id')
+        .eq('user_id', userUuid)
+        .eq('revoked', false);
 
-        if (devErr || !device) {
-          console.warn(`⚠️ Device ${device_id} not found or not owned by user`);
-          return jsonErr(res, `Device not found or unauthorized`, 404);
-        }
-
-        // Now insert the notification
-        const { error: insertErr } = await DB.insertNotification({
-          user_id: userUuid,
-          device_id,
-          type,
-          payload
-        });
-
-        if (insertErr) {
-          console.error('❌ Error inserting notification:', insertErr);
-          return jsonErr(res, 'Failed to insert notification', 500);
-        }
-
-        console.log(`📱 Notification sent to device ${device_id}`);
-        return jsonOk(res);
-
-      } else {
-        // Broadcast: Get all active devices for this user
-        const { data: devices, error: devErr } = await supabase
-          .from('devices')
-          .select('device_id')
-          .eq('user_id', userUuid)
-          .eq('revoked', false);
-
-        if (devErr) {
-          console.error('Error fetching devices for broadcast:', devErr);
-          return jsonErr(res, 'DB error fetching devices', 500);
-        }
-
-        if (!devices || devices.length === 0) {
-          return jsonErr(res, 'No active devices found for user', 404);
-        }
-
-        // Insert notification for each device
-        let successCount = 0;
-        for (const device of devices) {
-          const { error: insertErr } = await DB.insertNotification({
-            user_id: userUuid,
-            device_id: device.device_id,
-            type,
-            payload
-          });
-          
-          if (insertErr) {
-            console.warn(`⚠️ Failed to send notification to device ${device.device_id}:`, insertErr);
-          } else {
-            successCount++;
-          }
-        }
-
-        console.log(`📱 Broadcast notification to ${successCount}/${devices.length} devices`);
-        
-        if (successCount === 0) {
-          return jsonErr(res, 'Failed to send notifications to any device', 500);
-        }
-
-        return jsonOk(res);
+      if (devErr) {
+        console.error('Error fetching devices:', devErr);
+        return jsonErr(res, 'Failed to fetch devices', 500);
       }
+
+      if (!devices || devices.length === 0) {
+        return jsonErr(res, 'No active devices found for user', 404);
+      }
+
+      // Insert notification for each device
+      let successCount = 0;
+      for (const device of devices) {
+        try {
+          const { error: insertErr } = await supabase
+            .from('notifications')
+            .insert({
+              user_id: userUuid,
+              device_id: device.device_id,
+              type,
+              payload
+            });
+
+          if (!insertErr) {
+            successCount++;
+          } else {
+            console.warn(`⚠️ Failed to insert notification for device ${device.device_id}:`, insertErr);
+          }
+        } catch (err) {
+          console.error(`Error inserting notification for device ${device.device_id}:`, err);
+        }
+      }
+
+      console.log(`📱 Broadcast notification to ${successCount}/${devices.length} devices`);
+
+      if (successCount === 0) {
+        return jsonErr(res, 'Failed to send notification to any devices', 500);
+      }
+
+      return jsonOk(res);
     }
 
     return jsonErr(res, 'Method not allowed', 405);
-  } catch (e) {
-    console.error('🚫 notifications API unexpected error:', e);
+
+  } catch (err) {
+    console.error('🚫 notifications API error:', err);
     return jsonErr(res, 'Internal server error', 500);
   }
 }
