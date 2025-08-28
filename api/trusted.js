@@ -1,4 +1,5 @@
 // Methods:
+//  - GET /api/trusted — requires Firebase Auth or deviceId
 //  - POST /api/trusted — requires Firebase Auth or deviceId
 //  - DELETE /api/trusted?id=123 — requires Firebase Auth or deviceId
 import { handleCors, jsonErr, jsonOk } from '../utils/response.js';
@@ -24,7 +25,53 @@ export default async function handler(req, res) {
 
   if (!userId && !deviceId) return jsonErr(res, 'Unauthorized', 401);
 
+  if (req.method === 'GET') {
+    // Get trusted locations for the user/device
+    const { data: locations, error } = await supabase
+      .from('trusted_locations')
+      .select('id, label, lat, lon, radius_m, created_at')
+      .eq('user_id', userId || deviceId)
+      .order('created_at', { ascending: false });
+
+    if (error) return jsonErr(res, 'Failed to get trusted locations', 500);
+
+    // Map to match Android expected format
+    const mapped = (locations || []).map(loc => ({
+      id: loc.id.toString(),
+      latitude: loc.lat,
+      longitude: loc.lon,
+      radius: loc.radius_m
+    }));
+
+    return jsonOk(res, mapped);
+  }
+
   if (req.method === 'POST') {
+    // Check if this is a delete request (Android compatibility)
+    const url = new URL(req.url, 'http://localhost');
+    if (url.pathname.endsWith('/delete')) {
+      let data;
+      try {
+        data = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
+      } catch {
+        return jsonErr(res, 'Invalid JSON');
+      }
+
+      const id = parseInt(data.id, 10);
+      if (!id) return jsonErr(res, 'Missing id');
+
+      // Supprimer seulement si userId ou deviceId correspond
+      const { error } = await supabase
+        .from('trusted_locations')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', userId || deviceId);
+
+      if (error) return jsonErr(res, 'Delete failed', 500);
+      return jsonOk(res, {});
+    }
+
+    // Regular POST to add trusted location
     let data;
     try {
       data = typeof req.body === 'object' ? req.body : JSON.parse(req.body || '{}');
@@ -33,9 +80,12 @@ export default async function handler(req, res) {
     }
 
     const label = data.label || null;
-    const lat = parseFloat(data.lat);
-    const lon = parseFloat(data.lon);
-    const radius = data.radius_m != null ? parseInt(data.radius_m, 10) : 50;
+    // Accept both lat/lon and latitude/longitude for compatibility
+    const lat = parseFloat(data.lat || data.latitude);
+    const lon = parseFloat(data.lon || data.longitude);
+    // Accept both radius_m and radius for compatibility
+    const radius = data.radius_m != null ? parseInt(data.radius_m, 10) : 
+                   data.radius != null ? parseInt(data.radius, 10) : 50;
 
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return jsonErr(res, 'Missing lat/lon');
 
@@ -49,7 +99,7 @@ export default async function handler(req, res) {
       created_at: new Date().toISOString()
     };
 
-    const { data: inserted, error } = await supabase.from('trusted_places').insert(row).select().single();
+    const { data: inserted, error } = await supabase.from('trusted_locations').insert(row).select().single();
     if (error) return jsonErr(res, 'Insert failed', 500);
 
     return jsonOk(res, { trusted: inserted });
@@ -61,7 +111,7 @@ export default async function handler(req, res) {
 
     // Supprimer seulement si userId ou deviceId correspond
     const { error } = await supabase
-      .from('trusted_places')
+      .from('trusted_locations')
       .delete()
       .eq('id', id)
       .eq('user_id', userId || deviceId);
